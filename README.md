@@ -4,6 +4,8 @@
 
 🔗 Живая демонстрация: **https://smhotey.github.io/rotating-cube/**
 
+![Скриншот](preview.png)
+
 ## Что внутри
 
 - Гранёное тело куба с `MeshPhysicalMaterial` (metalness, clearcoat) и светящимися рёбрами
