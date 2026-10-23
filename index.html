@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Вращающийся 3D-куб</title>
+<meta name="description" content="Вращающийся 3D-куб на WebGL (Three.js) с подсветкой и управлением мышью.">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #05070d;
+    color: #dfe8ff;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  #scene { position: fixed; inset: 0; display: block; }
+
+  .vignette {
+    position: fixed; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(60% 60% at 50% 45%, rgba(56,189,248,.10), transparent 70%),
+      radial-gradient(90% 80% at 50% 110%, rgba(168,85,247,.12), transparent 65%),
+      radial-gradient(120% 120% at 50% 50%, transparent 55%, rgba(0,0,0,.75) 100%);
+  }
+
+  .caption {
+    position: fixed; left: 0; right: 0; bottom: max(22px, env(safe-area-inset-bottom));
+    text-align: center; pointer-events: none; padding: 0 16px;
+  }
+  .caption h1 {
+    margin: 0 0 8px;
+    font-size: clamp(16px, 2.4vw, 22px);
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #e8f2ff;
+    text-shadow: 0 0 22px rgba(56,189,248,.45);
+  }
+  .caption p { margin: 0; font-size: 13px; color: #7c8cb0; letter-spacing: .04em; }
+  .caption kbd {
+    font: inherit; padding: 1px 6px; border-radius: 5px;
+    border: 1px solid rgba(124,140,176,.35); color: #a9b8d8;
+  }
+
+  .badge {
+    position: fixed; top: max(16px, env(safe-area-inset-top)); left: 16px;
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    color: #5f7099; pointer-events: none;
+  }
+  .badge b { color: #38bdf8; font-weight: 600; }
+
+  /* Резервный вариант без WebGL/CDN: чистый CSS 3D */
+  .fallback { position: fixed; inset: 0; display: none; place-items: center; perspective: 900px; }
+  .fallback.on { display: grid; }
+  .fallback .note {
+    position: fixed; left: 0; right: 0; top: 50%; margin-top: -170px;
+    text-align: center; font-size: 12px; color: #6b7a9c; letter-spacing: .05em;
+  }
+  .css-cube { position: relative; width: 180px; height: 180px; transform-style: preserve-3d; animation: spin 14s linear infinite; }
+  .css-cube i {
+    position: absolute; inset: 0; display: block;
+    background: linear-gradient(135deg, rgba(56,189,248,.18), rgba(168,85,247,.22));
+    border: 1px solid rgba(120,200,255,.55);
+    box-shadow: inset 0 0 40px rgba(56,189,248,.25), 0 0 22px rgba(56,189,248,.15);
+  }
+  .css-cube i:nth-child(1) { transform: translateZ(90px); }
+  .css-cube i:nth-child(2) { transform: rotateY(180deg) translateZ(90px); }
+  .css-cube i:nth-child(3) { transform: rotateY(90deg) translateZ(90px); }
+  .css-cube i:nth-child(4) { transform: rotateY(-90deg) translateZ(90px); }
+  .css-cube i:nth-child(5) { transform: rotateX(90deg) translateZ(90px); }
+  .css-cube i:nth-child(6) { transform: rotateX(-90deg) translateZ(90px); }
+  @keyframes spin {
+    from { transform: rotateX(-24deg) rotateY(0deg); }
+    to   { transform: rotateX(-24deg) rotateY(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) { .css-cube { animation-duration: 40s; } }
+</style>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+<div class="vignette"></div>
+
+<div class="badge">WebGL · <b>Three.js</b></div>
+
+<div class="caption">
+  <h1>Вращающийся 3D-куб</h1>
+  <p><kbd>перетащи</kbd> — повернуть · <kbd>колесо</kbd> — масштаб · <kbd>двойной клик</kbd> — сброс</p>
+</div>
+
+<div class="fallback" id="fallback">
+  <div class="note">WebGL недоступен — показан CSS-вариант куба</div>
+  <div class="css-cube"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+const canvas = document.getElementById('scene');
+const fallback = document.getElementById('fallback');
+
+function showFallback() {
+  canvas.style.display = 'none';
+  fallback.classList.add('on');
+  document.querySelector('.badge').innerHTML = 'CSS 3D';
+}
+
+let THREE;
+try {
+  THREE = await import('three');
+} catch (err) {
+  console.warn('Three.js не загрузился:', err);
+  showFallback();
+  throw err;
+}
+
+try {
+  main();
+} catch (err) {
+  console.warn('WebGL недоступен:', err);
+  showFallback();
+}
+
+function main() {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x05070d, 0.075);
+
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 0.35, 6.2);
+
+  // --- Кубы -------------------------------------------------------------
+  const group = new THREE.Group();
+  scene.add(group);
+
+  // Гранёное тело куба
+  const bodyGeo = new THREE.BoxGeometry(1.9, 1.9, 1.9, 1, 1, 1);
+  const bodyMat = new THREE.MeshPhysicalMaterial({
+    color: 0x0f1b33,
+    metalness: 0.85,
+    roughness: 0.28,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.18,
+    emissive: 0x0a1a2e,
+    emissiveIntensity: 0.6,
+    flatShading: true
+  });
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  group.add(body);
+
+  // Светящиеся рёбра
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(bodyGeo),
+    new THREE.LineBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.95 })
+  );
+  edges.scale.setScalar(1.001);
+  group.add(edges);
+
+  // Внешняя каркасная оболочка
+  const shellGeo = new THREE.BoxGeometry(2.42, 2.42, 2.42);
+  const shell = new THREE.LineSegments(
+    new THREE.EdgesGeometry(shellGeo),
+    new THREE.LineBasicMaterial({ color: 0x4f7dff, transparent: true, opacity: 0.32 })
+  );
+  group.add(shell);
+
+  // Вершинные точки
+  const dots = new THREE.Points(
+    new THREE.BufferGeometry().setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([
+        1,1,1, 1,1,-1, 1,-1,1, 1,-1,-1,
+        -1,1,1, -1,1,-1, -1,-1,1, -1,-1,-1
+      ].flatMap(v => [v * 0.95, v * 0.95, v * 0.95]), 3)
+    ),
+    new THREE.PointsMaterial({ color: 0xaee9ff, size: 0.075, sizeAttenuation: true, transparent: true, opacity: 0.9 })
+  );
+  group.add(dots);
+
+  // --- Окружение: пыль + сетка ------------------------------------------
+  const starCount = 700;
+  const starPos = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount; i++) {
+    const r = 9 + Math.random() * 22;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    starPos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+    starPos[i * 3 + 1] = r * Math.cos(phi) * 0.7;
+    starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+  }
+  const stars = new THREE.Points(
+    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(starPos, 3)),
+    new THREE.PointsMaterial({ color: 0x8fb6ff, size: 0.06, transparent: true, opacity: 0.55, depthWrite: false })
+  );
+  scene.add(stars);
+
+  const grid = new THREE.GridHelper(24, 24, 0x1c3a63, 0x101d33);
+  grid.position.y = -2.6;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.5;
+  scene.add(grid);
+
+  // --- Свет --------------------------------------------------------------
+  scene.add(new THREE.HemisphereLight(0x88b8ff, 0x0a0a14, 0.55));
+
+  const key = new THREE.DirectionalLight(0xffffff, 2.1);
+  key.position.set(4, 6, 5);
+  scene.add(key);
+
+  const cyan = new THREE.PointLight(0x38bdf8, 55, 18, 2);
+  cyan.position.set(-4.5, 2.5, 3.5);
+  scene.add(cyan);
+
+  const magenta = new THREE.PointLight(0xa855f7, 45, 18, 2);
+  magenta.position.set(4.5, -2.8, 2.5);
+  scene.add(magenta);
+
+  // --- Управление --------------------------------------------------------
+  const AUTO = { x: 0.22, y: 0.42 };          // рад/с
+  const vel = { x: AUTO.x, y: AUTO.y };
+  const drag = { active: false, x: 0, y: 0 };
+
+  function pointerDown(e) {
+    drag.active = true;
+    drag.x = e.clientX; drag.y = e.clientY;
+    canvas.style.cursor = 'grabbing';
+    canvas.setPointerCapture?.(e.pointerId);
+  }
+  function pointerMove(e) {
+    if (!drag.active) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    drag.x = e.clientX; drag.y = e.clientY;
+    vel.y = dx * 0.006;
+    vel.x = dy * 0.006;
+    group.rotation.y += vel.y;
+    group.rotation.x += vel.x;
+  }
+  function pointerUp(e) {
+    drag.active = false;
+    canvas.style.cursor = 'grab';
+    canvas.releasePointerCapture?.(e.pointerId);
+  }
+
+  canvas.style.cursor = 'grab';
+  canvas.addEventListener('pointerdown', pointerDown);
+  canvas.addEventListener('pointermove', pointerMove);
+  canvas.addEventListener('pointerup', pointerUp);
+  canvas.addEventListener('pointercancel', pointerUp);
+
+  let zoom = 1;
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoom = THREE.MathUtils.clamp(zoom + e.deltaY * 0.0012, 0.55, 2.2);
+  }, { passive: false });
+
+  canvas.addEventListener('dblclick', () => {
+    group.rotation.set(0, 0, 0);
+    vel.x = AUTO.x; vel.y = AUTO.y;
+    zoom = 1;
+  });
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+  });
+
+  // Пауза, когда вкладка не видна — не жжём батарею
+  let visible = true;
+  document.addEventListener('visibilitychange', () => { visible = !document.hidden; });
+
+  // --- Цикл --------------------------------------------------------------
+  const clock = new THREE.Clock();
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const autoScale = reduceMotion ? 0.25 : 1;
+
+  function tick() {
+    requestAnimationFrame(tick);
+    const dt = Math.min(clock.getDelta(), 0.05);
+    if (!visible) return;
+    const t = clock.elapsedTime;
+
+    if (!drag.active) {
+      // плавное возвращение к автовращению
+      vel.x += (AUTO.x * autoScale - vel.x) * Math.min(1, dt * 1.6);
+      vel.y += (AUTO.y * autoScale - vel.y) * Math.min(1, dt * 1.6);
+      group.rotation.x += vel.x * dt;
+      group.rotation.y += vel.y * dt;
+    }
+
+    // лёгкое «дыхание» оболочки и парение
+    shell.rotation.x = -group.rotation.x * 0.6;
+    shell.rotation.y = -group.rotation.y * 0.6;
+    shell.scale.setScalar(1 + Math.sin(t * 1.1) * 0.02);
+    group.position.y = Math.sin(t * 0.9) * 0.06;
+
+    stars.rotation.y += dt * 0.012;
+    cyan.position.x = Math.cos(t * 0.6) * 5;
+    cyan.position.z = Math.sin(t * 0.6) * 5;
+    magenta.position.x = Math.cos(t * 0.6 + Math.PI) * 5;
+    magenta.position.z = Math.sin(t * 0.6 + Math.PI) * 5;
+
+    camera.position.z += (6.2 * zoom - camera.position.z) * Math.min(1, dt * 6);
+    camera.lookAt(0, 0, 0);
+
+    renderer.render(scene, camera);
+  }
+
+  tick();
+  window.__cubeReady = true;
+}
+</script>
+</body>
+</html>
